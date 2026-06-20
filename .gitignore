@@ -44,3 +44,4 @@ htmlcov/
 # MoFox-Bot specific
 config/local_*.toml
 *.log
+REVIEW.md
