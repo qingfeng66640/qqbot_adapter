@@ -1,7 +1,7 @@
 {
     "name": "qqbot_adapter",
     "display_name": "QQ 小龙虾 Bot 适配器",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "对接腾讯 QQ 官方机器人（小龙虾 Bot），支持 AppID + AppSecret 认证，通过 WebSocket OpCode 网关接收消息，通过 REST API 发送消息。",
     "author": "qf",
     "maintainers": [
