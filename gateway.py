@@ -360,6 +360,14 @@ class GatewayConnection:
 
         logger.info(f"收到 Hello，心跳间隔 {interval_sec:.1f} 秒")
 
+        # 取消旧的心跳任务（避免重连时多个心跳并存）
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
         # 判断使用 Identify 还是 Resume
         if self._session_id and self._last_seq is not None:
             logger.info(f"尝试 Resume（session_id={self._session_id}, seq={self._last_seq}）")
@@ -367,7 +375,7 @@ class GatewayConnection:
         else:
             await self._send_identify()
 
-        # 启动心跳循环
+        # 启动心跳循环（首心跳带 jitter 防止惊群和超时）
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(interval_sec))
 
     async def _handle_dispatch(self, d: dict[str, Any], s: int | None, t: str | None) -> None:
@@ -508,17 +516,24 @@ class GatewayConnection:
         await self._ws.send(json.dumps(payload))
 
     async def _heartbeat_loop(self, interval: float) -> None:
-        """心跳循环。按指定间隔发送 OpCode 1 Heartbeat。"""
+        """心跳循环。
+
+        首心跳使用随机 jitter（0 ~ interval）避免惊群，
+        之后按固定间隔发送 OpCode 1 Heartbeat。
+        d 字段填最近一次的 s 序列号，首次连接传 null。
+        """
         logger.info(f"心跳循环启动，间隔 {interval:.1f} 秒")
 
         try:
-            while self._running and self._ws is not None:
-                await asyncio.sleep(interval)
+            # 首心跳：随机延迟 0 ~ interval 防惊群
+            first_jitter = interval * random.random()
+            logger.debug(f"首心跳将在 {first_jitter:.1f} 秒后发送")
+            await asyncio.sleep(first_jitter)
 
+            while self._running and self._ws is not None:
                 if not self._running:
                     break
 
-                # 发送心跳，d 填最近一次的 s（没有则填 null）
                 seq = self._last_seq
                 payload = {
                     "op": OP_HEARTBEAT,
@@ -531,6 +546,9 @@ class GatewayConnection:
                 except websockets.exceptions.ConnectionClosed:
                     logger.warning("心跳发送失败，连接已关闭")
                     break
+
+                # 等待下一个心跳周期
+                await asyncio.sleep(interval)
 
         except asyncio.CancelledError:
             pass
