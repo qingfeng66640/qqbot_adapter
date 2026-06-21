@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, cast
 
 from mofox_wire import CoreSink, MessageEnvelope
@@ -26,6 +27,10 @@ from .gateway import GatewayConnection
 from .token_manager import TokenManager
 from .message_handler import MessageHandler
 from .send_handler import SendHandler
+
+# 抑制 httpx/httpcore 的 SSL INFO/DEBUG 日志（避免刷屏 "SSL connection is closed"）
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = get_logger("qqbot_adapter")
 
