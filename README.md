@@ -199,6 +199,11 @@ private_list_type = "blacklist"
 - `httpx` - HTTP 客户端（Token 获取 + REST API 调用）
 - `mofox-wire` - MessageEnvelope 数据结构
 
+## 注意事项
+
+由于 QQbot 不支持直接获取用户ID，故使用返回的加密ID进行用户判定。
+同时 QQbot 关闭了主动回复功能，因此降低至被动回复。
+
 ---
 
 **作者**: qf  

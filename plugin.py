@@ -204,7 +204,7 @@ class QQBotAdapter(BaseAdapter):
         try:
             await self._send_handler.send(envelope)
         except Exception:
-            logger.exception("发送 QQ 消息失败")
+            logger.error("发送 QQ 消息失败", exc_info=True)
 
     async def health_check(self) -> bool:
         """自定义健康检查：检查网关连接状态。

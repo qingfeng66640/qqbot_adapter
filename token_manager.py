@@ -116,7 +116,7 @@ class TokenManager:
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception("Token 刷新失败，30 秒后重试")
+                logger.error("Token 刷新失败，30 秒后重试", exc_info=True)
                 await asyncio.sleep(30)
 
     async def start(self) -> None:

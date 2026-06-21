@@ -16,6 +16,7 @@ logger = get_logger("qqbot_adapter.message_handler")
 # QQ Bot Dispatch 事件类型
 EVENT_C2C_MESSAGE_CREATE = "C2C_MESSAGE_CREATE"
 EVENT_GROUP_AT_MESSAGE_CREATE = "GROUP_AT_MESSAGE_CREATE"
+EVENT_GROUP_MESSAGE_CREATE = "GROUP_MESSAGE_CREATE"
 EVENT_FRIEND_ADD = "FRIEND_ADD"
 EVENT_FRIEND_DEL = "FRIEND_DEL"
 EVENT_GROUP_ADD_ROBOT = "GROUP_ADD_ROBOT"
@@ -52,7 +53,7 @@ class MessageHandler:
         """
         if t == EVENT_C2C_MESSAGE_CREATE:
             return await self._handle_c2c_message(d, platform, features_config)
-        elif t == EVENT_GROUP_AT_MESSAGE_CREATE:
+        elif t in (EVENT_GROUP_AT_MESSAGE_CREATE, EVENT_GROUP_MESSAGE_CREATE):
             return await self._handle_group_at_message(d, platform, features_config)
         elif t in (EVENT_FRIEND_ADD, EVENT_GROUP_ADD_ROBOT):
             logger.info(f"收到系统事件: {t}")
@@ -215,7 +216,7 @@ class MessageHandler:
                     else:
                         segments.append({"type": "image", "data": att_url})
                 except Exception:
-                    logger.exception("下载图片失败，使用 URL 代替")
+                    logger.error("下载图片失败，使用 URL 代替", exc_info=True)
                     segments.append({"type": "image", "data": att_url})
 
             elif content_type.startswith("audio/") or att.get("voice_wav_url"):
@@ -227,7 +228,7 @@ class MessageHandler:
                     else:
                         segments.append({"type": "voice", "data": voice_url})
                 except Exception:
-                    logger.exception("下载语音失败，使用 URL 代替")
+                    logger.error("下载语音失败，使用 URL 代替", exc_info=True)
                     segments.append({"type": "voice", "data": voice_url})
 
             elif content_type.startswith("video/"):
@@ -268,7 +269,7 @@ class MessageHandler:
                 data = response.content
                 return base64.b64encode(data).decode("utf-8")
         except Exception:
-            logger.exception(f"下载资源失败: {url[:100]}")
+            logger.error(f"下载资源失败: {url[:100]}", exc_info=True)
             return None
 
     def _is_user_banned(self, user_id: str, features_config: Any) -> bool:

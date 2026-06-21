@@ -62,7 +62,7 @@ class SendHandler:
         try:
             await self._send_message(envelope)
         except Exception:
-            logger.exception("发送 QQ 消息失败")
+            logger.error("发送 QQ 消息失败", exc_info=True)
 
     async def _send_message(self, envelope: MessageEnvelope) -> None:
         """核心发送逻辑。
@@ -243,7 +243,7 @@ class SendHandler:
         try:
             upload_resp = await self._post_api(upload_url, headers, upload_body)
         except Exception:
-            logger.exception(f"上传媒体失败 (file_type={file_type})")
+            logger.error(f"上传媒体失败 (file_type={file_type})", exc_info=True)
             return
 
         file_uuid = upload_resp.get("file_uuid", "")
@@ -346,8 +346,8 @@ class SendHandler:
                 return elapsed < PASSIVE_REPLY_WINDOW
 
             except (ValueError, TypeError):
-                logger.debug(f"无法解析时间戳 {qq_timestamp}，默认不使用被动回复")
-                return False
+                logger.debug(f"无法解析时间戳 {qq_timestamp}，跳过时间窗口检查")
+                return True  # 仍尝试被动回复，让服务端判断是否过期
 
         return True
 

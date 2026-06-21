@@ -260,7 +260,7 @@ class GatewayConnection:
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception("网关连接异常")
+                logger.error("网关连接异常", exc_info=True)
 
             # 判断是否需要重连
             if not self._running:
@@ -321,13 +321,13 @@ class GatewayConnection:
                 except json.JSONDecodeError:
                     logger.warning(f"收到非 JSON 消息: {raw[:200]}")
                 except Exception:
-                    logger.exception("处理网关消息异常")
+                    logger.error("处理网关消息异常", exc_info=True)
         except asyncio.CancelledError:
             raise
         except websockets.exceptions.ConnectionClosed as e:
             logger.warning(f"WebSocket 连接已关闭: code={e.code} reason={e.reason}")
         except Exception:
-            logger.exception("WebSocket 监听循环异常")
+            logger.error("WebSocket 监听循环异常", exc_info=True)
 
     async def _handle_payload(self, payload: dict[str, Any]) -> None:
         """按 OpCode 分发处理消息"""
@@ -406,7 +406,7 @@ class GatewayConnection:
             try:
                 await self._on_dispatch(t, d, s or 0)
             except Exception:
-                logger.exception(f"Dispatch 回调处理异常 (t={t})")
+                logger.error(f"Dispatch 回调处理异常 (t={t})", exc_info=True)
 
     async def _handle_reconnect(self) -> None:
         """处理 OpCode 7 Reconnect（服务端要求重连）。
@@ -553,7 +553,7 @@ class GatewayConnection:
         except asyncio.CancelledError:
             pass
         except Exception:
-            logger.exception("心跳循环异常")
+            logger.error("心跳循环异常", exc_info=True)
 
     async def wait_ready(self, timeout: float = 30.0) -> bool:
         """等待 READY 事件（认证成功）"""
