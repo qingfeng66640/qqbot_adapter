@@ -7,7 +7,6 @@ from typing import Any
 import httpx
 
 from mofox_wire import MessageEnvelope
-from mofox_wire.types import SegPayload
 
 from src.app.plugin_system.api.log_api import get_logger
 
@@ -20,12 +19,27 @@ API_BASE_PRODUCTION = "https://api.sgroup.qq.com"
 # 被动回复：5 分钟内有效
 PASSIVE_REPLY_WINDOW = 300  # 5 分钟（秒）
 
+# 富媒体上传 file_type 枚举
+FILE_TYPE_IMAGE = 1  # 图片：png, jpg
+FILE_TYPE_VIDEO = 2  # 视频：mp4
+FILE_TYPE_VOICE = 3  # 语音：silk, wav, mp3, flac
+FILE_TYPE_FILE = 4  # 文件（群聊暂不开放）
+
+# segment type → file_type 映射
+_SEGMENT_FILE_TYPE_MAP: dict[str, int] = {
+    "image": FILE_TYPE_IMAGE,
+    "video": FILE_TYPE_VIDEO,
+    "voice": FILE_TYPE_VOICE,
+    "file": FILE_TYPE_FILE,
+}
+
 
 class SendHandler:
     """QQ Bot 出站消息处理器。
 
     将 Neo-MoFox 的 MessageEnvelope 转换为 QQ 官方 REST API 调用。
     优先使用被动回复（在收到消息 5 分钟内），超时降级为主动消息。
+    支持文本、图片、视频、语音、文件消息的发送。
     """
 
     def __init__(
@@ -51,12 +65,16 @@ class SendHandler:
             logger.exception("发送 QQ 消息失败")
 
     async def _send_message(self, envelope: MessageEnvelope) -> None:
-        """核心发送逻辑"""
+        """核心发送逻辑。
+
+        处理策略：
+        1. 先发送文本内容（如有）
+        2. 逐个发送富媒体附件（图片/视频/语音/文件）
+        """
         message_segment = envelope.get("message_segment", [])
         message_info = envelope.get("message_info", {})
         metadata: dict[str, Any] = envelope.get("metadata", {}) or {}
 
-        # 解析 segment
         segments = message_segment if isinstance(message_segment, list) else [message_segment]
 
         # 判断目标（群聊 vs 单聊）
@@ -65,9 +83,6 @@ class SendHandler:
 
         # 提取文本内容
         text_content = self._extract_text(segments)
-
-        # 检查是否有图片段
-        image_segments = [s for s in segments if s.get("type") == "image"]
 
         # 提取 msg_id 用于被动回复
         msg_id = metadata.get("qq_event_id", "")
@@ -83,33 +98,45 @@ class SendHandler:
         }
 
         if group_info:
-            group_openid = metadata.get("qq_group_openid", "") or group_info.get("group_id", "")
-            if not group_openid:
+            target_type = "group"
+            target_id = metadata.get("qq_group_openid", "") or group_info.get("group_id", "")
+            if not target_id:
                 logger.error("群聊消息缺少 group_openid")
                 return
-
-            if image_segments and not text_content:
-                # 纯图片消息
-                await self._send_media_message(
-                    headers, "group", group_openid, image_segments[0], msg_id, can_passive_reply
-                )
-            else:
-                await self._send_text_message(
-                    headers, "group", group_openid, text_content, msg_id, can_passive_reply
-                )
-
         elif user_info:
-            user_openid = metadata.get("qq_user_openid", "") or user_info.get("user_id", "")
-            if not user_openid:
+            target_type = "user"
+            target_id = metadata.get("qq_user_openid", "") or user_info.get("user_id", "")
+            if not target_id:
                 logger.error("单聊消息缺少 user_openid")
                 return
-
-            await self._send_text_message(
-                headers, "user", user_openid, text_content, msg_id, can_passive_reply
-            )
-
         else:
             logger.error("消息缺少目标信息（group_info 或 user_info），无法发送")
+            return
+
+        # 1. 发送文本
+        if text_content:
+            await self._send_text_message(
+                headers, target_type, target_id, text_content, msg_id, can_passive_reply
+            )
+
+        # 2. 发送富媒体附件
+        for seg in segments:
+            seg_type = seg.get("type", "")
+            if seg_type not in _SEGMENT_FILE_TYPE_MAP:
+                continue
+
+            file_type = _SEGMENT_FILE_TYPE_MAP[seg_type]
+            media_data = seg.get("data", "")
+
+            # 群聊不支持发送文件 (file_type=4)
+            if file_type == FILE_TYPE_FILE and target_type == "group":
+                logger.warning("群聊暂不支持发送文件（QQ 官方限制）")
+                continue
+
+            await self._send_media_message(
+                headers, target_type, target_id, media_data, file_type,
+                msg_id, can_passive_reply,
+            )
 
     async def _send_text_message(
         self,
@@ -159,18 +186,39 @@ class SendHandler:
         headers: dict[str, str],
         target_type: str,
         target_id: str,
-        image_segment: SegPayload,
+        media_data: Any,
+        file_type: int,
         msg_id: str,
         can_passive_reply: bool,
     ) -> None:
-        """发送富媒体消息（图片等）到 QQ。
+        """发送富媒体消息（图片/视频/语音/文件）到 QQ。
 
-        先上传媒体资源获取 file_uuid，再发送 media 类型消息。
+        上传 → 获取 file_info → 发送 msg_type=7 媒体消息。
+        推荐模式: srv_send_msg=false，先上传再通过 media 字段发送。
+
+        Args:
+            headers: HTTP 请求头
+            target_type: 目标类型 "group" 或 "user"
+            target_id: group_openid 或 user_openid
+            media_data: 媒体数据。str = URL 或 base64；dict = {url, filename, size} 结构
+            file_type: 1=图片, 2=视频, 3=语音, 4=文件
+            msg_id: 原始消息 ID（用于被动回复）
+            can_passive_reply: 是否可以使用被动回复
         """
-        image_data = image_segment.get("data", "")
+        # 解析媒体数据：dict 结构 (来自 file/video segment) 或 纯字符串 (base64/URL)
+        if isinstance(media_data, dict):
+            media_url = media_data.get("url", "")
+            # 如果没有 url，尝试 data 字段（base64）
+            if not media_url:
+                media_url = media_data.get("data", "")
+        elif isinstance(media_data, str):
+            media_url = media_data
+        else:
+            logger.error(f"媒体数据格式不支持: {type(media_data)}")
+            return
 
-        if not isinstance(image_data, str):
-            logger.error("图片数据格式不正确")
+        if not media_url:
+            logger.error("媒体数据为空，无法发送")
             return
 
         # 步骤 1：上传媒体
@@ -180,22 +228,22 @@ class SendHandler:
             upload_url = f"{self._base_url}/v2/users/{target_id}/files"
 
         # 判断是 URL 还是 base64
-        is_base64 = not image_data.startswith("http")
+        is_base64 = not str(media_url).startswith("http")
 
         upload_body: dict[str, Any] = {
-            "file_type": 1,  # 图片
-            "srv_send_msg": False,  # 仅上传不发送
+            "file_type": file_type,
+            "srv_send_msg": False,  # 推荐模式：仅上传不发送
         }
 
         if is_base64:
-            upload_body["file_data"] = image_data
+            upload_body["file_data"] = media_url
         else:
-            upload_body["url"] = image_data
+            upload_body["url"] = media_url
 
         try:
             upload_resp = await self._post_api(upload_url, headers, upload_body)
         except Exception:
-            logger.exception("上传媒体失败")
+            logger.exception(f"上传媒体失败 (file_type={file_type})")
             return
 
         file_uuid = upload_resp.get("file_uuid", "")
@@ -205,7 +253,7 @@ class SendHandler:
             logger.error(f"上传媒体失败，响应中没有 file_uuid: {upload_resp}")
             return
 
-        # 步骤 2：发送 media 消息
+        # 步骤 2：发送 media 消息 (msg_type=7)
         if target_type == "group":
             send_url = f"{self._base_url}/v2/groups/{target_id}/messages"
         else:
@@ -215,6 +263,10 @@ class SendHandler:
             "msg_type": 7,  # 富媒体消息
             "media": {"file_info": file_info},
         }
+
+        # 群聊 msg_type=7 content 仍为必填，填空字符串
+        if target_type == "group":
+            send_body["content"] = ""
 
         if can_passive_reply and msg_id:
             send_body["msg_id"] = msg_id
