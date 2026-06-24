@@ -398,6 +398,10 @@ class GatewayConnection:
 
         if t == DISPATCH_RESUMED:
             self._ready_event.set()
+            # Resume 事件可能也携带 user 信息（新版本 API），有则更新
+            resumed_user = d.get("user")
+            if resumed_user:
+                self._bot_user = resumed_user
             logger.info("Resumed 成功！")
             return
 

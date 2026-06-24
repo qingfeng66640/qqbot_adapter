@@ -75,7 +75,7 @@ class QQBotAdapter(BaseAdapter):
 
         self._gateway: GatewayConnection | None = None
         self._token_mgr: TokenManager | None = None
-        self._message_handler = MessageHandler()
+        self._message_handler: MessageHandler | None = None
         self._send_handler: SendHandler | None = None
         self._gateway_task: Any = None
 
@@ -106,6 +106,9 @@ class QQBotAdapter(BaseAdapter):
             env=config.connection.env,
             bot_name=config.bot.bot_name,
         )
+
+        # 创建消息处理器
+        self._message_handler = MessageHandler()
 
         # 创建网关连接
         gateway = GatewayConnection(
@@ -175,6 +178,9 @@ class QQBotAdapter(BaseAdapter):
             MessageEnvelope | None: 转换后的消息信封，不需要处理时返回 None
         """
         if not self.plugin or not self.plugin.config:
+            return None
+
+        if not self._message_handler:
             return None
 
         config = cast(QQBotAdapterConfig, self.plugin.config)
@@ -266,6 +272,11 @@ class QQBotAdapter(BaseAdapter):
     async def get_bot_info(self) -> dict[str, Any]:  # type: ignore[override]
         """获取 Bot 信息。
 
+        bot_id 必须是 QQ 内部用户 ID（来自 READY 事件的 user.id），
+        而非 AppID（AppID 是开发者后台标识，仅用于认证，不用于消息路由）。
+
+        优先级：实时网关数据 > 网关缓存的旧数据 > unknown_bot
+
         Returns:
             dict: 包含 bot_id、bot_name、platform 的信息
         """
@@ -278,18 +289,29 @@ class QQBotAdapter(BaseAdapter):
 
         config = cast(QQBotAdapterConfig, self.plugin.config)
 
-        # 如果网关已就绪，使用 READY 事件中的 user 信息
-        if self._gateway and self._gateway.is_connected:
-            bot_user = self._gateway.bot_user
+        # 确定有效的 bot_user 来源
+        bot_user: dict[str, Any] = {}
+        if self._gateway:
+            # gateway._bot_user 在重连期间不会被清空（stop() 才清），
+            # 优先用实时数据，其次用缓存的旧 Ready 数据
+            if self._gateway.is_connected:
+                bot_user = self._gateway.bot_user
+            else:
+                bot_user = self._gateway.bot_user  # 重连期间保留旧值
+
+        bot_id = bot_user.get("id", "")
+        if bot_id:
             return {
-                "bot_id": bot_user.get("id", config.bot.app_id),
-                "bot_name": bot_user.get("username", config.bot.bot_name),
+                "bot_id": bot_id,
+                "bot_name": bot_user.get("username", "") or config.bot.bot_name,
                 "bot_is_bot": bot_user.get("bot", True),
                 "platform": self.platform,
             }
 
+        # 从未获取到 Ready 信息（罕见：首次连接且 READY 尚未到达）
+        logger.warning("Bot 信息不可用，网关尚未收到 READY 事件")
         return {
-            "bot_id": config.bot.app_id,
+            "bot_id": "unknown_bot",
             "bot_name": config.bot.bot_name,
             "platform": self.platform,
         }

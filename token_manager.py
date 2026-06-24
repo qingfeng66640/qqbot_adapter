@@ -55,7 +55,7 @@ class TokenManager:
         logger.info("正在获取 QQ Bot access_token...")
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
                 response = await client.post(
                     TOKEN_URL,
                     json={

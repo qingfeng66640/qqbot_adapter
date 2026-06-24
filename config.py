@@ -160,6 +160,12 @@ class QQBotAdapterConfig(BaseConfig):
             label="启用单聊消息",
             tag="general",
         )
+        debug_log_raw_payload: bool = Field(
+            default=False,
+            description="开启后将所有消息事件的原始 JSON payload 打印到日志（仅用于调试排查）",
+            label="调试：打印原始 payload",
+            tag="debug",
+        )
 
     plugin: PluginSection = Field(default_factory=PluginSection)
     bot: BotSection = Field(default_factory=BotSection)

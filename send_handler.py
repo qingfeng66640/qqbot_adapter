@@ -284,7 +284,7 @@ class SendHandler:
         包含错误处理和 token 过期重试逻辑。
         """
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
                 response = await client.post(url, headers=headers, json=body)
 
                 if response.status_code == 401:
